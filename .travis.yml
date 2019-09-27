@@ -99,7 +99,7 @@ before_install:
     # Our current working directory
     - export WORKDIR=$(pwd)
     # Fetch patch that disables non-portable compile flags in spt3g
-    - curl -SL https://github.com/hpc4cmb/cmbenv/blob/master/pkgs/patch_spt3g -o patch_spt3g
+    - curl -SL https://raw.githubusercontent.com/hpc4cmb/cmbenv/master/pkgs/patch_spt3g -o patch_spt3g
     # Install spt3g to /usr, and python bindings into python prefix
     - git clone --branch master --single-branch --depth 1 https://github.com/CMB-S4/spt3g_software.git
     - cd spt3g_software
