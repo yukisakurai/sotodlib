@@ -1,3 +1,6 @@
+# We force the language to python
+language: python
+
 # We are using compiled extensions, and so we want to test with at least an
 # "old" version of gcc and a "new" one.
 
@@ -87,14 +90,12 @@ before_install:
     # Set python install prefix and site version
     - export PYPREFIX=$(dirname $(dirname $(which python3)))
     - echo "Python install prefix = ${PYPREFIX}"
-    - export PYSITE=$(python --version 2>&1 | awk '{print $2}' | sed -e "s#\(.*\)\.\(.*\)\..*#\1.\2#")
+    - export PYSITE=$(python3 --version 2>&1 | awk '{print $2}' | sed -e "s#\(.*\)\.\(.*\)\..*#\1.\2#")
     - echo "Python site version = ${PYSITE}"
     # Install python dependencies.
-    - pip install --upgrade pip
-    - pip install --upgrade setuptools
-    - pip install -q numpy scipy matplotlib cmake cython astropy ephem healpy numba toml quaternionarray
-    - pip install -q https://github.com/healpy/pysm/archive/master.tar.gz
-    - pip install -q https://github.com/hpc4cmb/toast/archive/master.tar.gz
+    - pip3 install -q numpy scipy matplotlib cmake cython astropy ephem healpy numba toml quaternionarray
+    - pip3 install -q https://github.com/healpy/pysm/archive/master.tar.gz
+    - pip3 install -q https://github.com/hpc4cmb/toast/archive/master.tar.gz
     # Our current working directory
     - export WORKDIR=$(pwd)
     # Fetch patch that disables non-portable compile flags in spt3g
@@ -114,7 +115,7 @@ before_install:
         -DCMAKE_CXX_FLAGS="-g -O2 -fPIC -pthread -std=c++11"
         -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
         -DBOOST_ROOT="/usr"
-        -DPYTHON_EXECUTABLE:FILEPATH="${PYTHON}"
+        -DPYTHON_EXECUTABLE:FILEPATH=$(which python3)
         ..
     - make -j 2
     - ln -s ${WORKDIR}/spt3g_software/build/bin/* /usr/bin/
@@ -132,7 +133,7 @@ before_install:
         -DCMAKE_C_FLAGS="-g -O2 -fPIC -pthread"
         -DCMAKE_CXX_FLAGS="-g -O2 -fPIC -pthread -std=c++11"
         -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
-        -DPYTHON_EXECUTABLE:FILEPATH="${PYTHON}"
+        -DPYTHON_EXECUTABLE:FILEPATH=$(which python3)
         -DCMAKE_INSTALL_PREFIX=/usr
         -DPYTHON_INSTALL_DEST=${PYPREFIX}/lib/python${PYSITE}/site-packages
         ..
