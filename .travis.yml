@@ -6,10 +6,11 @@ language: python
 
 matrix:
   include:
-    # GCC 4.9 - this is the oldest version with reasonable C++11 support
+    # GCC 5 - default version for ubuntu 16.04 LTS.  Python 3.5
     - os: linux
       dist: trusty
       sudo: false
+      python: 3.5
       addons:
         apt:
           sources:
@@ -23,39 +24,20 @@ matrix:
             - libgl1-mesa-glx
             - xvfb
             - libboost-all-dev
-            - liblapack-dev
-            - libfftw3-dev
-            - gcc-4.9
-            - g++-4.9
-      env:
-        - MATRIX_EVAL="export CC=$(which gcc-4.9) && export CXX=$(which g++-4.9) && export FC=$(which gfortran-4.9) && export DEPGCC=-4.9"
-    # GCC 5 - default version for ubuntu 16.04 LTS
-    - os: linux
-      dist: trusty
-      sudo: false
-      addons:
-        apt:
-          sources:
-            - ubuntu-toolchain-r-test
-          packages:
-            - build-essential
-            - git
-            - curl
-            - pkg-config
-            - locales
-            - libgl1-mesa-glx
-            - xvfb
             - libopenblas-dev
             - liblapack-dev
             - libfftw3-dev
+            - libflac-dev
+            - libhdf5-dev
             - gcc-5
             - g++-5
       env:
-        - MATRIX_EVAL="export CC=$(which gcc-5) && export CXX=$(which g++-5) && export FC=$(which gfortran-5) && export DEPGCC=-5"
-    # GCC 7 - default version for ubuntu 18.04 LTS
+        - MATRIX_EVAL="export CC=$(which gcc-5) && export CXX=$(which g++-5)"
+    # GCC 5 - default version for ubuntu 16.04 LTS.  Python 3.6
     - os: linux
       dist: trusty
       sudo: false
+      python: 3.6
       addons:
         apt:
           sources:
@@ -68,78 +50,76 @@ matrix:
             - locales
             - libgl1-mesa-glx
             - xvfb
+            - libboost-all-dev
             - libopenblas-dev
             - liblapack-dev
             - libfftw3-dev
+            - libflac-dev
+            - libhdf5-dev
+            - gcc-5
+            - g++-5
+      env:
+        - MATRIX_EVAL="export CC=$(which gcc-5) && export CXX=$(which g++-5)"
+    # GCC 7 - default version for ubuntu 18.04 LTS.  Python 3.5
+    - os: linux
+      dist: trusty
+      sudo: false
+      python: 3.5
+      addons:
+        apt:
+          sources:
+            - ubuntu-toolchain-r-test
+          packages:
+            - build-essential
+            - git
+            - curl
+            - pkg-config
+            - locales
+            - libgl1-mesa-glx
+            - xvfb
+            - libboost-all-dev
+            - libopenblas-dev
+            - liblapack-dev
+            - libfftw3-dev
+            - libflac-dev
+            - libhdf5-dev
             - gcc-7
             - g++-7
       env:
-        - MATRIX_EVAL="export CC=$(which gcc-7) && export CXX=$(which g++-7) && export FC=$(which gfortran-7) && export DEPGCC=-7"
+        - MATRIX_EVAL="export CC=$(which gcc-7) && export CXX=$(which g++-7)"
+    # GCC 7 - default version for ubuntu 18.04 LTS.  Python 3.6
+    - os: linux
+      dist: trusty
+      sudo: false
+      python: 3.6
+      addons:
+        apt:
+          sources:
+            - ubuntu-toolchain-r-test
+          packages:
+            - build-essential
+            - git
+            - curl
+            - pkg-config
+            - locales
+            - libgl1-mesa-glx
+            - xvfb
+            - libboost-all-dev
+            - libopenblas-dev
+            - liblapack-dev
+            - libfftw3-dev
+            - libflac-dev
+            - libhdf5-dev
+            - gcc-7
+            - g++-7
+      env:
+        - MATRIX_EVAL="export CC=$(which gcc-7) && export CXX=$(which g++-7)"
 
-# The python versions to test.
-python:
-    - 3.6
-
-# Compile spt3g and so3g.  Pip install toast from latest github version.
+# Install remaining dependencies.
 
 before_install:
-    # Set the C and C++ compilers
     - eval "${MATRIX_EVAL}"
-    - echo "  CC = ${CC} $(${CC} -dumpversion)"
-    - echo "  CXX = ${CXX} $(${CXX} -dumpversion)"
-    # Set python install prefix and site version
-    - export PYPREFIX=$(dirname $(dirname $(which python3)))
-    - echo "Python install prefix = ${PYPREFIX}"
-    - export PYSITE=$(python3 --version 2>&1 | awk '{print $2}' | sed -e "s#\(.*\)\.\(.*\)\..*#\1.\2#")
-    - echo "Python site version = ${PYSITE}"
-    # Install python dependencies.
-    - pip3 install -q numpy scipy matplotlib cmake cython astropy ephem healpy numba toml quaternionarray
-    - pip3 install -q https://github.com/healpy/pysm/archive/master.tar.gz
-    - pip3 install -q https://github.com/hpc4cmb/toast/archive/master.tar.gz
-    # Our current working directory
-    - export WORKDIR=$(pwd)
-    # Fetch patch that disables non-portable compile flags in spt3g
-    - curl -SL https://raw.githubusercontent.com/hpc4cmb/cmbenv/master/pkgs/patch_spt3g -o patch_spt3g
-    # Install spt3g to /usr, and python bindings into python prefix
-    - git clone --branch master --single-branch --depth 1 https://github.com/CMB-S4/spt3g_software.git
-    - cd spt3g_software
-    - patch -p1 < ../patch_spt3g
-    - mkdir build
-    - cd build
-    - LDFLAGS="-Wl,-z,muldefs"
-        BOOST_ROOT=/usr
-        cmake
-        -DCMAKE_C_COMPILER="${CC}"
-        -DCMAKE_CXX_COMPILER="${CXX}"
-        -DCMAKE_C_FLAGS="-g -O2 -fPIC -pthread"
-        -DCMAKE_CXX_FLAGS="-g -O2 -fPIC -pthread -std=c++11"
-        -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
-        -DBOOST_ROOT="/usr"
-        -DPYTHON_EXECUTABLE:FILEPATH=$(which python3)
-        ..
-    - make -j 2
-    - ln -s ${WORKDIR}/spt3g_software/build/bin/* /usr/bin/
-    - ln -s ${WORKDIR}/spt3g_software/build/spt3g ${PYPREFIX}/lib/python${PYSITE}/site-packages/
-    - cd ${WORKDIR}
-    # Install so3g to /usr
-    - git clone --branch master --single-branch --depth 1 https://github.com/simonsobs/so3g.git
-    - cd so3g
-    - mkdir build
-    - cd build
-    - LDFLAGS="-Wl,-z,muldefs"
-        cmake
-        -DCMAKE_C_COMPILER="${CC}"
-        -DCMAKE_CXX_COMPILER="${CXX}"
-        -DCMAKE_C_FLAGS="-g -O2 -fPIC -pthread"
-        -DCMAKE_CXX_FLAGS="-g -O2 -fPIC -pthread -std=c++11"
-        -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
-        -DPYTHON_EXECUTABLE:FILEPATH=$(which python3)
-        -DCMAKE_INSTALL_PREFIX=/usr
-        -DPYTHON_INSTALL_DEST=${PYPREFIX}/lib/python${PYSITE}/site-packages
-        ..
-    - make -j 2
-    - make install
-    - cd ${WORKDIR}
+    - ./travis/travis_before-install.sh
 
 # Install sotodlib
 install:

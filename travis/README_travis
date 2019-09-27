@@ -1,0 +1,49 @@
+Debugging Travis Builds
+==================================================
+
+Debugging travis tests by pushing to github is slow and creates lots of traffic.
+For rapid debugging on a local machine, the scripts in this directory can be
+used.
+
+Requirements
+-----------------
+
+- A working docker installation.
+
+- A checkout of the sotodlib source code that contains the updated travis
+  scripts in this directory.
+
+Procedure
+-----------------
+
+1.  Go to the sotodlib travis webpage:
+
+https://travis-ci.org/simonsobs/sotodlib
+
+And select a recent build.  Click on the link to bring up the log.  Click on
+the "worker" section near the top.  Find the "instance" name which is the name
+of the docker image that was used for the run.  It will look something like:
+
+"travisci/ci-garnet:packer-1512502276-986baf0"
+
+2.  Look in the sotodlib/.travis.yml file and see which gcc and python versions
+are being tested in the build matrix.  Choose the version combination to test.
+
+3.  cd into the directory containing this README_travis file.  Run these steps:
+
+$> ./travis_debug_start.sh travisci/ci-garnet:packer-1512502276-986baf0
+(substitute the actual instance name from step #1).
+
+Now you will be inside the container, and the directory containing our scripts
+will be mounted in ~/scripts.  Setup the dependencies for your chosen gcc and
+python versions.  For example, if testing gcc-7 and python-3.6 you would do:
+
+$> ./scripts/travis_debug_setup.sh 3.6 7
+
+Now that the build dependencies have been installed, you can git clone specific
+copies of sotodlib, run tests, etc.  After you are done, leave the docker
+container:
+
+$> exit
+
+4.  You can repeat step #3 for each gcc and python version in the build matrix.
