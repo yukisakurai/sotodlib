@@ -24,6 +24,7 @@ from spt3g import core
 
 import numpy as np
 
+import time
 from collections import OrderedDict
 
 class FieldGroup(list):
@@ -91,7 +92,7 @@ class FieldGroup(list):
         for item in self:
             if isinstance(item, FieldGroup):
                 output[item.name] = item.empty()
-                if item.timestamp_field:
+                if item.timestamp_field and item.timestamp_field != '(discard)':
                     output[item.timestamp_field] = []
             else:
                 item = Field.as_field(item)
@@ -182,7 +183,7 @@ def unpack_frame_object(fo, field_request, streams, compression_info=None):
                 comp_info = None
             target = fo[item.name]
             unpack_frame_object(target, item, streams[item.name], comp_info)
-            if item.timestamp_field is not None:
+            if item.timestamp_field is not None and item.timestamp_field != '(discard)':
                 t0, t1, ns = target.start, target.stop, target.n_samples
                 t0, t1 = t0.time / core.G3Units.sec, t1.time / core.G3Units.sec
                 streams[item.timestamp_field].append(np.linspace(t0, t1, ns))
@@ -205,6 +206,63 @@ def unpack_frame_object(fo, field_request, streams, compression_info=None):
             v = np.array(fo[key])
         streams[key].append(v)
 
+def unpack_shadow_frames(pool, field_request, path=[], compression_info=None):
+    """Unpack requested fields from the G3ExpanderPool's internally cached data.
+    
+    Arguments:
+      pool (G3ExpanderPool):
+      field_request (FieldGroup): Description of what fields to unpack.
+      compression_info: The gain and offset dicts in the case of
+        compression (or None to disable).
+
+    """
+    output = OrderedDict()
+    for item in field_request:
+        if isinstance(item, FieldGroup):
+            if item.timestamp_field is not None:
+                # This is what we are looking for...
+                keys = [x for x in item]
+                comp_req = None
+                if item.compression:
+                    comp_req = (1, path + ['compressor_gain_%s' % item.name],
+                                path + ['compressor_offset_%s' % item.name])
+                keys_, vects, start, stop = pool.RestreamTimestream(
+                    path + [item.name], keys, comp_req)
+                output[item.name] = dict([(k,v) for k,v in zip(keys, vects)])
+                if item.timestamp_field != '(discard)':
+                    t0, t1 = start.time / core.G3Units.sec, stop.time / core.G3Units.sec
+                    output[item.timestamp_field] = (np.linspace(t0, t1, len(vects[0])))
+            else:
+                keys = [x for x in item]
+                vects = [pool.Restream(path + [item.name, k]) for k in  keys]
+                output[item.name] = dict([(k,v) for k,v in zip(keys, vects)])
+            continue
+        else:
+            item = Field.as_field(item)
+            output[item.name] = pool.Restream(path + [item.name])
+            continue
+        # This is a simple field.
+        item = Field.as_field(item)
+        key = item.name
+        if item.opts['optional']:
+            if not key in frames[0].keys():
+                if key in streams:
+                    assert(len(streams[key]) == 0) # field went missing?
+                    del streams[key]
+                assert(key not in streams)
+                continue
+        if compression_info is not None:
+            for fo, (gain,offset) in zip(frames, compression_info):
+                gain, offset = compression_info
+                m, b = gain.get(key, 1.), offset.get(key, 0.)
+                v = np.array(fo[key], dtype='float32') / m + b
+                streams[key].append(v)
+        else:
+            for fo in frames:
+                v = np.array(fo[key])
+                streams[key].append(v)
+    return output
+
 def unpack_frames(filename, field_request, streams):
     """Read frames from the specified file and expand the data by stream.
     Only the requested fields, specified through *_fields arguments,
@@ -225,20 +283,66 @@ def unpack_frames(filename, field_request, streams):
         streams = field_request.empty()
     
     reader = so3g.G3IndexedReader(filename)
+
+    read_time = 0
+    unpack_time = 0
     while True:
+        t0 = time.time()
         frames = reader.Process(None)
         if len(frames) == 0:
             break
         frame = frames[0]
+        t1 = time.time()
+        read_time += t1 - t0
         if frame.type == core.G3FrameType.Scan:
             unpack_frame_object(frame, field_request, streams)
+        unpack_time += time.time() - t1
+    print('read took', read_time)
+    print('unpack took', unpack_time)
     return streams
 
-def load_observation(db, obs_id, dets=None, prefix=None):
+def unpack_frames_threaded(filenames, field_request, _threading=None):
+    """Read frames from the specified file and expand the data by stream.
+    Only the requested fields, specified through *_fields arguments,
+    are expanded.
+
+    Arguments:
+      filename (str): Full path to the file to load.
+      field_request: Instructions for what fields to load.
+      streams: Structure to which to append the
+        streams from this file (perhaps obtained from running
+        unpack_frames on a preceding file).
+
+    Returns:
+      streams (structure containing lists of numpy arrays).
+
+    """
+    reader = core.G3Reader(filenames)
+
+    if _threading is None:
+        npool = 0
+    else:
+        npool = _threading
+
+    t0 = time.time()
+    pool = so3g.G3ThreadedExpander(npool)
+    pipe = core.G3Pipeline()
+    pipe.Add(reader)
+    pipe.Add(pool)
+    pipe.Run()
+    print('read+buffer took', time.time() - t0)
+
+    # new unpack.
+    t0 = time.time()
+    streams = unpack_shadow_frames(pool, field_request)
+    print('new-unpack took', time.time() - t0)
+    return streams
+
+def load_observation(db, obs_id, dets=None, prefix=None, _threading=None,
+                     structure=None):
     """Load the data for some observation.  You can restrict to only some
     detectors. Coming soon: also restrict by time range / sample
     index.
-
 
     This specifically targets the pipe-s0001 sim format.
 
@@ -251,6 +355,9 @@ def load_observation(db, obs_id, dets=None, prefix=None):
         loads all dets present in this observation.
       prefix (str): The root address of the data files.  If not
         specified, the prefix is taken from the ObsFileDB.
+      structure (str): Select the returned format; 'standard'
+        (default) for the nested dictionary; 'simple' for flatter
+        arrays as described by the unpacking instructions.
 
     Returns:
       (signal_streams, other_streams).
@@ -260,6 +367,9 @@ def load_observation(db, obs_id, dets=None, prefix=None):
         prefix = db.prefix
         if prefix is None:
             prefix = './'
+
+    if structure is None:
+        structure = 'standard'
 
     # Regardless of what dets have been asked for (maybe none), get
     # the list of detsets implicated in this observation.
@@ -285,6 +395,9 @@ def load_observation(db, obs_id, dets=None, prefix=None):
     for p in pairs_req:
         dets_by_detset[p[0]].append(p[1])
 
+    if _threading is None:
+        _threading = 0
+
     # Loop through relevant files, in sample order, and accumulate
     # lists of stream segments.
 
@@ -297,30 +410,41 @@ def load_observation(db, obs_id, dets=None, prefix=None):
         request = FieldGroup('root', [
             FieldGroup('signal', dets, timestamp_field='timestamps',
                        compression=True),
-            FieldGroup('boresight', ['az', 'el', 'roll']),
+            FieldGroup('boresight', ['az', 'el', 'roll'],
+                       timestamp_field='(discard)'),
             Field('hwp_angle', optional=True),
             'site_position',
             'site_velocity',
             'boresight_azel',
             'boresight_radec',
         ])
-        for row in c:
-            f = row[0]
-            streams = unpack_frames(prefix+f, request, streams)
+        if _threading == 0:
+            for row in c:
+                f = row[0]
+                streams = unpack_frames(prefix+f, request, streams)
+        else:
+            filenames = [prefix + row[0] for row in c]
+            streams = unpack_frames_threaded(filenames, request, _threading)
         stream_groups.append((request, streams))
 
     # Merge the groups.
+    t = time.time()
     streams = OrderedDict()
     for request, s in stream_groups:
         request.merge_result(streams, s)
         
-    FieldGroup.hstack_result(streams)
+    if _threading == 0:
+        FieldGroup.hstack_result(streams)
+        
+    print('merge+hstack took', time.time() - t)
+    
+    if structure == 'simple':
+        return streams
 
     # Re-pack into something plausibly standardizable.  In first sims,
     # everything is co-sampled by design, and thus "primary".  But we
     # return an object that includes a place for "secondary"
     # (non-cosampled) timestreams.
-
     streams_out = OrderedDict([
         ('primary', {
             'signal': streams['signal'],
@@ -336,7 +460,6 @@ def load_observation(db, obs_id, dets=None, prefix=None):
         ])
 
     # Optional fields.
-
     if 'hwp_angle' in streams:
         streams_out['primary']['hwp_angle'] = streams['hwp_angle']
 
