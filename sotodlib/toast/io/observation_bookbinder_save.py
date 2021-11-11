@@ -155,17 +155,17 @@ class save_bookbinder_obs_meta(object):
     as the frame files for an observation.
 
     Args:
-        meta_arrays (list):  The observation metadata arrays to export.
-        noise_models (list):  The noise models to export.
-        meta_path (str):  The path to the HDF5 file to write.
+        out_dir (str):  The output directory.
+        meta_file (str):  The base filename to write
 
     """
 
-    def __init__(self, meta_file="metadata.h5"):
+    def __init__(self, out_dir=None, meta_file="metadata.h5"):
+        self.out_dir = out_dir
         self._meta_file = meta_file
 
     @toast.timing.function_timer
-    def __call__(self, obs, dir):
+    def __call__(self, obs):
         log = toast.Logger.get()
         log.verbose(f"Create observation frame and HDF5 file for {obs.name} in {dir}")
 
@@ -173,9 +173,9 @@ class save_bookbinder_obs_meta(object):
         ob = self._create_obs_frame(obs)
 
         # Write hdf5 file
-        self._create_meta_file(obs, os.path.join(dir, self._meta_file))
+        self._create_meta_file(obs, os.path.join(self._out_dir, self._meta_file))
 
-        return ob, cal
+        return ob
 
     def _create_obs_frame(self, obs):
         # Construct observation frame
@@ -203,7 +203,7 @@ class save_bookbinder_obs_meta(object):
             try:
                 l = len(m_val)
                 # This is an array
-                ob[m_out] = t3g.to_g3_array_type(obs[m_in])
+                ob[m_key] = t3g.to_g3_array_type(m_val)
             except Exception:
                 # This is a scalar (no len defined)
                 try:
