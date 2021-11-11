@@ -21,6 +21,7 @@ if toast_available is None:
         import toast
         import toast.ops
         from toast.observation import default_values as defaults
+        from toast import schedule_sim_ground
         import sotodlib.toast as sotoast
 
         toast_available = True
@@ -84,7 +85,7 @@ def simulation_test_data(
     mpicomm,
     telescope_name="SAT4",
     wafer_slot="w42",
-    band="f030",
+    band="SAT_f030",
     sample_rate=10.0 * u.Hz,
     temp_dir=None,
     el_nod=False,
@@ -143,7 +144,7 @@ def simulation_test_data(
             tdir = tempfile.mkdtemp()
 
         sch_file = os.path.join(tdir, "ground_schedule.txt")
-        toast.schedule_sim_ground.run_scheduler(
+        schedule_sim_ground.run_scheduler(
             opts=[
                 "--site-name",
                 telescope.site.name,

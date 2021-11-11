@@ -78,7 +78,7 @@ class SOFocalplane(Focalplane):
             if hwfile is not None:
                 log.info(f"Loading hardware configuration from {hwfile}...")
                 hw = Hardware(hwfile)
-            elif self.telescope in ["LAT", "SAT1", "SAT2", "SAT3"]:
+            elif self.telescope in ["LAT", "SAT1", "SAT2", "SAT3", "SAT4"]:
                 log.info("Simulating default hardware configuration")
                 hw = get_example()
                 hw.data["detectors"] = sim_telescope_detectors(

@@ -4,6 +4,7 @@
 """
 
 import os
+import shutil
 
 import numpy as np
 
@@ -30,6 +31,7 @@ if toast_available is None:
         import toast.ops
         from toast.observation import default_values as defaults
         import sotodlib.toast as sotoast
+        from sotodlib.toast import io as stio
 
         toast_available = True
     except ImportError:
@@ -37,7 +39,6 @@ if toast_available is None:
 
 
 class ToastBookbinderTest(TestCase):
-
     def setUp(self):
         fixture_name = os.path.splitext(os.path.basename(__file__))[0]
         if not toast_available:
@@ -46,16 +47,23 @@ class ToastBookbinderTest(TestCase):
         world, procs, rank = get_world()
         self.outdir = create_outdir(fixture_name, mpicomm=world)
 
-
     def test_bookbinder(self):
         if not toast_available:
             return
         world, procs, rank = get_world()
         testdir = os.path.join(self.outdir, "bookbinder")
         if world is None or world.rank == 0:
+            if os.path.isdir(testdir):
+                shutil.rmtree(testdir)
             os.makedirs(testdir)
+        if world is not None:
+            world.barrier()
 
         data = simulation_test_data(world)
+
+        # Create a noise model from focalplane detector properties
+        noise_model = toast.ops.DefaultNoiseModel()
+        noise_model.apply(data)
 
         # Simulate some noise
         sim_noise = toast.ops.SimNoise()
@@ -63,8 +71,8 @@ class ToastBookbinderTest(TestCase):
 
         # Set up the save operator
 
-        meta_exporter = sotoast.io.save_bookbinder_obs_meta()
-        data_exporter = sotoast.io.save_bookbinder_obs_data(
+        meta_exporter = stio.save_bookbinder_obs_meta()
+        data_exporter = stio.save_bookbinder_obs_data(
             timestamp_names=(defaults.times, defaults.times),
             shared_names=[
                 (defaults.shared_flags, defaults.shared_flags, None),
@@ -76,16 +84,29 @@ class ToastBookbinderTest(TestCase):
                 (defaults.position, defaults.position, None),
                 (defaults.velocity, defaults.velocity, None),
             ],
-            det_names=[(defaults.det_data, defaults.det_data, np.float64, ), (defaults.det_flags, defaults.det_flags, np.int32,)],
-            interval_names=[("scan_leftright", "intervals_scan_leftright"),
-            ("turn_leftright", "intervals_turn_leftright"),
-            ("scan_rightleft", "intervals_scan_rightleft"),
-            ("turn_rightleft", "intervals_turn_rightleft"),
-            ("elnod", "intervals_elnod"),
-            ("scanning", "intervals_scanning"),
-            ("turnaround", "intervals_turnaround"),
-            ("sun_up", "intervals_sun_up"),
-            ("sun_close", "intervals_sun_close"),],
+            det_names=[
+                (
+                    defaults.det_data,
+                    defaults.det_data,
+                    np.float64,
+                ),
+                (
+                    defaults.det_flags,
+                    defaults.det_flags,
+                    np.int32,
+                ),
+            ],
+            interval_names=[
+                ("scan_leftright", "intervals_scan_leftright"),
+                ("turn_leftright", "intervals_turn_leftright"),
+                ("scan_rightleft", "intervals_scan_rightleft"),
+                ("turn_rightleft", "intervals_turn_rightleft"),
+                ("elnod", "intervals_elnod"),
+                ("scanning", "intervals_scanning"),
+                ("turnaround", "intervals_turnaround"),
+                ("sun_up", "intervals_sun_up"),
+                ("sun_close", "intervals_sun_close"),
+            ],
         )
 
         exporter = toast.spt3g.export_obs(
@@ -121,5 +142,3 @@ class ToastBookbinderTest(TestCase):
         #     if ob != orig:
         #         print(f"-------- Proc {data.comm.world_rank} ---------\n{orig}\n{ob}")
         #     self.assertTrue(ob == orig)
-
-
