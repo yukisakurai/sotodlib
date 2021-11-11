@@ -113,8 +113,8 @@ def save_bookbinder_detdata(
     out = so3g.G3SuperTimestream()
     out.names = dview.detectors
     out.times = t3g.to_g3_time(tview)
-    if dtype == np.float32 or dtype == np.float64:
-        out.quanta = np.ones(len(dview.detectors))
+    #if dtype == np.float32 or dtype == np.float64:
+    out.quanta = np.ones(len(dview.detectors))
     out.data = scale * dview[:].astype(dtype)
 
     # Set any options
@@ -139,9 +139,21 @@ def save_bookbinder_intervals(obs, name, iframe):
     """
     overlap = iframe & obs.intervals[name]
 
-    out = c3g.IntervalsTime(
-        [(t3g.to_g3_time(x.start), t3g.to_g3_time(x.stop)) for x in overlap]
-    )
+    out = None
+    try:
+        out = c3g.IntervalsTime(
+            [(t3g.o_g3_time(x.start), t3g.to_g3_time(x.stop)) for x in overlap]
+        )
+    except Exception:
+        # Intervals objects not available
+        out = c3g.G3VectorTime(
+            [
+                elem
+                for x in overlap
+                for elem in (t3g.to_g3_time(x.start), t3g.to_g3_time(x.stop))
+            ]
+        )
+
     return out
 
 
@@ -166,16 +178,16 @@ class save_bookbinder_obs_meta(object):
 
     @toast.timing.function_timer
     def __call__(self, obs):
-        log = toast.Logger.get()
+        log = toast.utils.Logger.get()
         log.verbose(f"Create observation frame and HDF5 file for {obs.name} in {dir}")
 
         # Construct observation frame
         ob = self._create_obs_frame(obs)
 
         # Write hdf5 file
-        self._create_meta_file(obs, os.path.join(self._out_dir, self._meta_file))
+        self._create_meta_file(obs, os.path.join(self.out_dir, self._meta_file))
 
-        return ob
+        return ob, c3g.G3Frame(c3g.G3FrameType.Calibration)
 
     def _create_obs_frame(self, obs):
         # Construct observation frame
@@ -217,7 +229,7 @@ class save_bookbinder_obs_meta(object):
         return ob
 
     def _create_meta_file(self, obs, path):
-        log = toast.Logger.get()
+        log = toast.utils.Logger.get()
         if os.path.isfile(path):
             raise RuntimeError(f"Metadata file '{path}' already exists")
 
@@ -242,7 +254,7 @@ class save_bookbinder_obs_meta(object):
             # Instrument properties
             inst_group = hf.create_group("instrument")
             inst_group.attrs["telescope_name"] = obs.telescope.name
-            inst_group.attrs["telescope_class"] = object_fullname(
+            inst_group.attrs["telescope_class"] = toast.utils.object_fullname(
                 obs.telescope.__class__
             )
             inst_group.attrs["telescope_uid"] = obs.telescope.uid
@@ -429,7 +441,7 @@ class save_bookbinder_obs_data(object):
                     det_key,
                     view_name=frame_intervals,
                     view_index=ivw,
-                    g3t=det_type,
+                    dtype=det_type,
                     times=self._timestamp_names[0],
                     options=det_opts,
                 )

@@ -75,7 +75,7 @@ class ToastBookbinderTest(TestCase):
         data_exporter = stio.save_bookbinder_obs_data(
             timestamp_names=(defaults.times, defaults.times),
             shared_names=[
-                (defaults.shared_flags, defaults.shared_flags, None),
+                (defaults.shared_flags, "shared_flags", None),
                 (defaults.hwp_angle, defaults.hwp_angle, None),
                 (defaults.azimuth, defaults.azimuth, None),
                 (defaults.elevation, defaults.elevation, None),
@@ -85,16 +85,8 @@ class ToastBookbinderTest(TestCase):
                 (defaults.velocity, defaults.velocity, None),
             ],
             det_names=[
-                (
-                    defaults.det_data,
-                    defaults.det_data,
-                    np.float64,
-                ),
-                (
-                    defaults.det_flags,
-                    defaults.det_flags,
-                    np.int32,
-                ),
+                (defaults.det_data, defaults.det_data, np.float64, None),
+                (defaults.det_flags, defaults.det_flags, np.int32, None),
             ],
             interval_names=[
                 ("scan_leftright", "intervals_scan_leftright"),
@@ -120,6 +112,12 @@ class ToastBookbinderTest(TestCase):
         for ob in data.obs:
             original.append(ob.duplicate(times="times"))
             ob_dir = os.path.join(testdir, ob.name)
+            if data.comm.group_rank == 0:
+                if os.path.isdir(ob_dir):
+                    shutil.rmtree(ob_dir)
+                os.makedirs(ob_dir)
+            if data.comm.comm_group is not None:
+                data.comm.comm_group.barrier()
             meta_exporter.out_dir = ob_dir
 
             obframes = exporter(ob)
