@@ -1400,7 +1400,7 @@ class G3tSmurf:
         """
         return SmurfStatus.from_time(time, self, stream_id=stream_id,show_pb=show_pb)
 
-def dump_DetDb(archive, detdb_file):
+def dump_DetDb(archive, detdb_file, min_ctime=1.6e9):
     """
     Take a G3tSmurf archive and create a a DetDb of the type used with Context
     
@@ -1408,9 +1408,10 @@ def dump_DetDb(archive, detdb_file):
     -----
         archive : G3tSmurf instance
         detdb_file : filename
+        min_ctime : only add channels made after this ctime
     """
     my_db = core.metadata.DetDb(map_file=detdb_file)
-    my_db.create_table('base', column_defs=[])
+    my_db.create_table('base', column_defs=["'id' string"])
     column_defs = [
         "'band' int",
         "'channel' int",
@@ -1421,10 +1422,11 @@ def dump_DetDb(archive, detdb_file):
     
     ddb_list = my_db.dets()['name']
     session = archive.Session()
-    channels = session.query(Channels).all()
+    channels = session.query(Channels).join(ChanAssignments).filter(ChanAssignments.ctime>=min_ctime).all()
     msk = np.where([ch.name not in ddb_list for ch in channels])[0].astype(int)
     for ch in tqdm(np.array(channels)[msk]):
         my_db.get_id( name=ch.name )
+        my_db.add_props('base', ch.name, id=ch.name)
         my_db.add_props('smurf', ch.name, band=ch.band, 
                         channel=ch.channel, frequency=ch.frequency,
                         chan_assignment=ch.chan_assignment.ctime)
