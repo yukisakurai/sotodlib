@@ -40,10 +40,8 @@ class G3tHWP():
     def load_data(self, start, end, fast=True, show_status=False):
 
         """
-        Loads smurf G3 data for a given time range. For the specified time range
-        this will return a chunk of data that includes that time range.
-
-        This function returns an array of IRIG timestamp and hwp angle
+        Loads house keeping data for a given time range. 
+        For the specified time range, this function returns an array of IRIG timestamp and hwp angle
 
         Args
         -----
@@ -71,8 +69,9 @@ class G3tHWP():
     def load_file(self, filename, fast=True, return_ref = False, show_status=False):
 
         """
-        Loads smurf G3 data for a given filebames. 
+        Loads house keeping data for a given filename list.
         This function returns an array of IRIG timestamp and hwp angle
+        Please make sure that the data is during HWP rotation.
 
         Args
         -----
@@ -82,12 +81,6 @@ class G3tHWP():
                 If True, will show status
             return_ref : bool, optional: 
                 If True, will return reference slit indecies
-
-            load_biases : bool, optional 
-                If True, will return biases.
-            status : SmurfStatus, optional
-                If note none, will use this Status on the data load
-
         """
         
         # load housekeeping files with hwp keys
