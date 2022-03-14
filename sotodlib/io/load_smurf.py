@@ -99,22 +99,6 @@ def get_sample_timestamps(frame):
 class G3tSmurf:
     def __init__(self, archive_path, db_path=None, meta_path=None, 
                  echo=False):
-        """
-        Class to manage a smurf data archive.
-
-        Args
-        -----
-            archive_path: path
-                Path to the data directory
-            db_path: path, optional
-                Path to the sqlite file. Defaults to 
-                ``<archive_path>/frames.db``
-            meta_path: path, optional
-                Path of directory containing smurf related metadata (ie. channel
-                assignments). Required for full functionality.
-            echo: bool, optional
-                If true, all sql statements will print to stdout.
-        """
         if db_path is None:
             db_path = os.path.join(archive_path, 'frames.db')
         self.archive_path = archive_path
