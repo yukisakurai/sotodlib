@@ -55,7 +55,7 @@ class G3tHWP():
                 If True, will show status
         """
         if isinstance(start,np.datetime64): start = start.timestamp()
-        if isinstance(end,np.datetime64): end = start.timestamp()
+        if isinstance(end,np.datetime64): end = end.timestamp()
         # load housekeeping data with hwp keys
         if show_status: print('loading HK data files ...')
         if fast==False: self._fast = False
