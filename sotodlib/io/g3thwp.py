@@ -3,7 +3,7 @@ import scipy.interpolate
 import so3g
 
 class G3tHWP(): 
-    def __init__(self, archive_path, ratio=0.1):
+    def __init__(self, archive_path, ratio=0.1, fast=True, show_status=False):
 
         """
         Class to manage a HWP HK data.
@@ -14,6 +14,10 @@ class G3tHWP():
                 Path to the data directory
             ratio: reference slit parameter
                 0.1 - 0.3 (10-30%, adjustment value)
+            fast : bool, optional
+                If True, run fast fill_ref algorithm
+            show_status : bool, optional
+                If True, will show status
         """
 
         self._archive_path = archive_path
@@ -34,10 +38,10 @@ class G3tHWP():
         # Allowed jitter in slit width
         self._dev = ratio  # 10%-30%  ## fixme!!! sometimes reference point finding doesn't work!
         self._ref_indexes = None
-        self._fast = True
-        self._status = False
+        self._fast = fast
+        self._status = show_status
         
-    def load_data(self, start, end, fast=True, show_status=False):
+    def load_data(self, start, end):
 
         """
         Loads house keeping data for a given time range. 
@@ -49,24 +53,20 @@ class G3tHWP():
                 start time for data
             end :  timestamp  or DateTime
                 end time for data
-            show_status : bool, optional: 
-                If True, will show status
         """
         if isinstance(start,np.datetime64): start = start.timestamp()
         if isinstance(end,np.datetime64): end = end.timestamp()
         # load housekeeping data with hwp keys
-        if show_status: print('loading HK data files ...')
-        if fast==False: self._fast = False
-        if show_status: self._status = True
+        if self._status: print('loading HK data files ...')
         data = so3g.hk.load_range(start, end, fields=self._hwp_keys, alias=self._alias, data_dir=self._archive_path)
-        if show_status:	print('calculating HWP angle ...')
+        if self._status:	print('calculating HWP angle ...')
 
         if len(data['counter'][1]) == 0 or len(data['irig_time'][1]) == 0:
             raise ValueError('HWP is not spinning in this time window!')
         return self._hwp_angle_calculator(data['counter'][1], data['counter_index'][1], data['irig_time'][1], data['rising_edge_count'][1])
 
 
-    def load_file(self, filename, fast=True, return_ref = False, show_status=False):
+    def load_file(self, filename):
 
         """
         Loads house keeping data for a given filename list.
@@ -84,8 +84,7 @@ class G3tHWP():
         """
         
         # load housekeeping files with hwp keys
-        if show_status: print('loading HK data files ...')
-        if fast==False: self._fast = False
+        if self._status: print('loading HK data files ...')
         scanner = so3g.hk.HKArchiveScanner()
         if isinstance(filename, list) or isinstance(filename, np.ndarray):
             for f in filename: scanner.process_file(self._archive_path + '/' + f)
@@ -95,7 +94,7 @@ class G3tHWP():
             if not self._hwp_keys[i] in arc.get_fields()[0].keys():
                 raise ValueError('HWP is not spinning in this file!')
         data = arc.simple(self._hwp_keys)
-        if show_status:	print('calculating HWP angle ...')
+        if self._status:	print('calculating HWP angle ...')
         if len(data[0][1]) == 0 or len(data[2][1]) == 0:
             raise ValueError('HWP is not spinning in this file!')
         print('INFO: hwp angle calculation is finished.')
