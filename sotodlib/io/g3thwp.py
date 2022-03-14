@@ -151,7 +151,7 @@ class G3tHWP():
 
         if len(self._time) != len(self._angle):
             raise ValueError('Failed to calculate hwp angle!')
-        print('INFO: hwp angle calculation is finished.')
+        if self._status: print('INFO: hwp angle calculation is finished.')
         return self._time, self._angle
     
     def _find_refs(self):
@@ -167,7 +167,7 @@ class G3tHWP():
         ref_lo_cond = ((self._ref_edges + 1) * self._slit_dist * (1 - self._dev))
         # Find the reference slit locations (indexes)
         self._ref_indexes = np.argwhere(np.logical_and(diff < ref_hi_cond, diff > ref_lo_cond)).flatten()
-        print('INFO: found {} reference points'.format(len(self._ref_indexes)))
+        if self._status: print('INFO: found {} reference points'.format(len(self._ref_indexes)))
         # Define the reference slit line to be the line before
         # the two "missing" lines
         # Store the count and clock values of the reference lines
@@ -265,7 +265,8 @@ class G3tHWP():
                 idx = np.argsort(self._encd_cnt)
                 self._encd_clk = self._encd_clk[idx]
             else: print('WARNING: maybe packet drop exists')
-        else: print('INFO: no need to fix encoder index')
+        else: 
+            if self._status: print('INFO: no need to fix encoder index')
                  
     def interp_smurf(self, smurf_timestamp):
         smurf_angle = scipy.interpolate.interp1d(self._time, self.angle, kind='linear',fill_value='extrapolate')(smurf_timestamp)
