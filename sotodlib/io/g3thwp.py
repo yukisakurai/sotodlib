@@ -3,17 +3,23 @@ import scipy.interpolate
 import so3g
 
 class G3tHWP(): 
-    def __init__(self, archive_path, ratio=0.1, fast=True, show_status=False):
+    def __init__(self, archive_path, ratio=0.1, irig_type=0, direction=False, fast=True, show_status=False):
 
         """
         Class to manage a HWP HK data.
 
         Args
         -----
-            archive_path: path
+            archive_path : path
                 Path to the data directory
-            ratio: reference slit parameter
+            ratio : reference slit parameter
                 0.1 - 0.3 (10-30%, adjustment value)
+            irig_type : 0 or 1, optional
+                If 0, use 1 Hz IRIG timing (default)
+                If 1, use 10 Hz IRIG timing
+            direction : bool, optional
+                If True, return rotation direction = 0 or 1
+                *** to be checked by hardware that 0 is CW and 1 is CCW from (sky side) consistently　for all SAT ***
             fast : bool, optional
                 If True, run fast fill_ref algorithm
             show_status : bool, optional
@@ -26,6 +32,9 @@ class G3tHWP():
             'observatory.HBA1.feeds.HWPEncoder.irig_time',
             'observatory.HBA1.feeds.HWPEncoder_full.counter',
             'observatory.HBA1.feeds.HWPEncoder_full.counter_index',
+            'observatory.HBA1.feeds.HWPEncoder.irig_synch_pulse_clock_time',
+            'observatory.HBA1.feeds.HWPEncoder.irig_synch_pulse_clock_counts',   
+            'observatory.HBA1.feeds.HWPEncoder.quad',
         ]
         self._alias=[key.split('.')[-1] for key in self._hwp_keys]
         
@@ -39,6 +48,8 @@ class G3tHWP():
         self._dev = ratio  # 10%-30%  ## fixme!!! sometimes reference point finding doesn't work!
         self._ref_indexes = None
         self._fast = fast
+        self._direction = direction
+        self._irig_type = irig_type
         self._status = show_status
         
     def load_data(self, start, end):
@@ -53,17 +64,41 @@ class G3tHWP():
                 start time for data
             end :  timestamp  or DateTime
                 end time for data
+        Returns
+        --------
+           time: List of IRIG timing
+           angle: List of IRIG synched HWP angle
+           direction (optional): List of rotation direction
+        
         """
+        
         if isinstance(start,np.datetime64): start = start.timestamp()
         if isinstance(end,np.datetime64): end = end.timestamp()
         # load housekeeping data with hwp keys
         if self._status: print('loading HK data files ...')
         data = so3g.hk.load_range(start, end, fields=self._hwp_keys, alias=self._alias, data_dir=self._archive_path)
-        if self._status:	print('calculating HWP angle ...')
+        if self._status: print('calculating HWP angle ...')
 
-        if len(data['counter'][1]) == 0 or len(data['irig_time'][1]) == 0:
-            raise ValueError('HWP is not spinning in this time window!')
-        return self._hwp_angle_calculator(data['counter'][1], data['counter_index'][1], data['irig_time'][1], data['rising_edge_count'][1])
+        if len(data['irig_time'][1])==0: raise ValueError('HWP Agent does not run in this time window!')
+        if len(data['counter'][1])==0: raise ValueError('HWP does not spin in this time window!')
+        counter = data['counter'][1]
+        counter_idx = data['counter_index'][1]
+        irig_time = data['irig_time'][1]
+        rising_edge = data['rising_edge_count'][1]
+        
+        if self._irig_type == 1:
+            irig_time = data['irig_synch_pulse_clock_time'][1]
+            rising_edge = data['irig_synch_pulse_clock_counts'][1]
+        
+        if not self._direction:
+            return self._hwp_angle_calculator(counter, counter_idx, irig_time, rising_edge)
+        else: 
+            time, angle = self._hwp_angle_calculator(counter, counter_idx, irig_time, rising_edge)
+            quad = self._quad_form(data['quad'][1])
+            quad_time = self._quad_form(data['quad'][0])
+            quad_irig = scipy.interpolate.interp1d(quad_time, quad, kind='linear',fill_value='extrapolate')(time)
+            return time, angle, quad_irig
+
 
 
     def load_file(self, filename):
@@ -94,12 +129,26 @@ class G3tHWP():
             if not self._hwp_keys[i] in arc.get_fields()[0].keys():
                 raise ValueError('HWP is not spinning in this file!')
         data = arc.simple(self._hwp_keys)
-        if self._status:	print('calculating HWP angle ...')
-        if len(data[0][1]) == 0 or len(data[2][1]) == 0:
-            raise ValueError('HWP is not spinning in this file!')
-        print('INFO: hwp angle calculation is finished.')
+        if self._status: print('calculating HWP angle ...')
+        if len(data[1][1])==0: raise ValueError('HWP Agent does not run in this time window!')
+        if len(data[0][1])==0: raise ValueError('HWP does not spin in this time window!')
+        if self._status: print('INFO: hwp angle calculation is finished.')
 
-        return self._hwp_angle_calculator(data[0][1], data[1][1], data[2][1], data[3][1])
+        counter = data[2][1]
+        counter_idx = data[3][1]
+        irig_time = data[1][1]
+        rising_edge = data[0][1]
+        if self._irig_type == 1:
+            irig_time = data[4][1]
+            rising_edge = data[5][1]
+        if not self._direction:
+            return self._hwp_angle_calculator(counter, counter_idx, irig_time, rising_edge)
+        else: 
+            time, angle = self._hwp_angle_calculator(counter, counter_idx, irig_time, rising_edge)
+            quad = self._quad_form(data[-1][1])
+            quad_time = self._quad_form(data['quad'][0])
+            quad_irig = scipy.interpolate.interp1d(quad_time, quad, kind='linear',fill_value='extrapolate')(time)
+            return time, angle, quad_irig
 
     def _hwp_angle_calculator(self, counter, counter_idx, irig_time, rising_edge):
 
@@ -259,13 +308,17 @@ class G3tHWP():
             else: print('WARNING: maybe packet drop exists')
         else: 
             if self._status: print('INFO: no need to fix encoder index')
-                 
+    
+    def _quad_form(self, quad):
+        # treat 30 sec span noise
+        quad_diff = np.ediff1d(quad, to_begin=0)
+        for i in np.argwhere(quad_diff==1).flatten():
+            if quad[i-1] == 0 and quad[i] > 0 and quad[i+1] == 0: quad[i]=0
+        # bit process
+        quad[(quad<1) & (quad>=0.5)] = 1
+        quad[(quad>0) & (quad<0.5)] = 0
+        return quad
+    
     def interp_smurf(self, smurf_timestamp):
         smurf_angle = scipy.interpolate.interp1d(self._time, self.angle, kind='linear',fill_value='extrapolate')(smurf_timestamp)
         return smurf_angle
-
-def hwpss(angle, tsm, dsm, bins=128):
-    hwpss_denom = np.histogram(angle, bins=bins, range=[0, 2*np.pi])[0]
-    hwpss_num = np.histogram(angle, bins=bins, range=[0, 2*np.pi],weights=dsm)[0]
-    hwpss = hwpss_num / hwpss_denom
-    return np.linspace(0, 2*np.pi, bins), hwpss
