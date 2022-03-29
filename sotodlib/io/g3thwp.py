@@ -1,9 +1,11 @@
+import os
 import numpy as np
 import scipy.interpolate
 import so3g
+from spt3g import core
 
 class G3tHWP(): 
-    def __init__(self, archive_path, ratio=0.1, irig_type=0, direction=False, fast=True, show_status=False):
+    def __init__(self, archive_path, ratio=0.1, irig_type=0, fast=True, show_status=False, g3out_path=''):
 
         """
         Class to manage a HWP HK data.
@@ -17,13 +19,13 @@ class G3tHWP():
             irig_type : 0 or 1, optional
                 If 0, use 1 Hz IRIG timing (default)
                 If 1, use 10 Hz IRIG timing
-            direction : bool, optional
-                If True, return rotation direction = 0 or 1
-                *** to be checked by hardware that 0 is CW and 1 is CCW from (sky side) consistently　for all SAT ***
+            *** to be checked by hardware that 0 is CW and 1 is CCW from (sky side) consistently　for all SAT ***
             fast : bool, optional
                 If True, run fast fill_ref algorithm
             show_status : bool, optional
                 If True, will show status
+            g3out_path : empty string or path, optional
+                If input path exists, will output angle g3 file with SO HK format
         """
 
         self._archive_path = archive_path
@@ -48,9 +50,9 @@ class G3tHWP():
         self._dev = ratio  # 10%-30%  ## fixme!!! sometimes reference point finding doesn't work!
         self._ref_indexes = None
         self._fast = fast
-        self._direction = direction
         self._irig_type = irig_type
         self._status = show_status
+        self._path = g3out_path
         
     def load_data(self, start, end):
 
@@ -64,12 +66,29 @@ class G3tHWP():
                 start time for data
             end :  timestamp  or DateTime
                 end time for data
+                
         Returns
         --------
-           time: List of IRIG timing
-           angle: List of IRIG synched HWP angle
-           direction (optional): List of rotation direction
+           fast_time: IRIG synched timing (~2kHz)
+           angle (float): IRIG synched HWP angle in radian
+           slow_time: time list of slow block
+           stable (flag): if non-zero, indicates the HWP spin state is known.  
+                          I.e. it is either spinning at a measurable rate, or stationary.  When this flag is non-zero, the hwp_rate field can be taken at face value.
+           locked (flag): if non-zero, indicates the HWP is spinning and the position solution is working.  
+                           In this case one should find the hwp_angle populated in the fast data block.
+           hwp_rate (float): the "approximate" HWP spin rate, with sign, in revs / second.  Use placeholder value of 0 for cases when not "stable".
+
         
+        Output SO HK g3
+        --------
+             Provider: 'hwp'
+                 Fast block
+                     'hwp.hwp_angle' 
+                 Slow block
+                     'hwp.stable'
+                     'hwp.locked'
+                     'hwp.hwp_rate'
+
         """
         
         if isinstance(start,np.datetime64): start = start.timestamp()
@@ -78,79 +97,98 @@ class G3tHWP():
         if self._status: print('loading HK data files ...')
         data = so3g.hk.load_range(start, end, fields=self._hwp_keys, alias=self._alias, data_dir=self._archive_path)
         if self._status: print('calculating HWP angle ...')
-
-        if len(data['irig_time'][1])==0: raise ValueError('HWP Agent does not run in this time window!')
-        if len(data['counter'][1])==0: raise ValueError('HWP does not spin in this time window!')
-        counter = data['counter'][1]
-        counter_idx = data['counter_index'][1]
-        irig_time = data['irig_time'][1]
-        rising_edge = data['rising_edge_count'][1]
         
-        if self._irig_type == 1:
-            irig_time = data['irig_synch_pulse_clock_time'][1]
-            rising_edge = data['irig_synch_pulse_clock_counts'][1]
-        
-        if not self._direction:
-            return self._hwp_angle_calculator(counter, counter_idx, irig_time, rising_edge)
-        else: 
-            time, angle = self._hwp_angle_calculator(counter, counter_idx, irig_time, rising_edge)
+        # Fast block
+        if 'counter' in data.keys():
+            counter = data['counter'][1]
+            counter_idx = data['counter_index'][1]
+            quad_time = data['quad'][0]
             quad = self._quad_form(data['quad'][1])
-            quad_time = self._quad_form(data['quad'][0])
-            quad_irig = scipy.interpolate.interp1d(quad_time, quad, kind='linear',fill_value='extrapolate')(time)
-            return time, angle, quad_irig
-
-
-
-    def load_file(self, filename):
-
-        """
-        Loads house keeping data for a given filename list.
-        This function returns an array of IRIG timestamp and hwp angle
-        Please make sure that the data is during HWP rotation.
-
-        Args
-        -----
-            filename : str or list
-                A filename or list of filenames (to be loaded in order).
-            show_status : bool, optional: 
-                If True, will show status
-            return_ref : bool, optional: 
-                If True, will return reference slit indecies
-        """
-        
-        # load housekeeping files with hwp keys
-        if self._status: print('loading HK data files ...')
-        scanner = so3g.hk.HKArchiveScanner()
-        if isinstance(filename, list) or isinstance(filename, np.ndarray):
-            for f in filename: scanner.process_file(self._archive_path + '/' + f)
-        else: scanner.process_file(self._archive_path + '/' + filename)
-        arc = scanner.finalize()
-        for i in range(len(self._hwp_keys)):
-            if not self._hwp_keys[i] in arc.get_fields()[0].keys():
-                raise ValueError('HWP is not spinning in this file!')
-        data = arc.simple(self._hwp_keys)
-        if self._status: print('calculating HWP angle ...')
-        if len(data[1][1])==0: raise ValueError('HWP Agent does not run in this time window!')
-        if len(data[0][1])==0: raise ValueError('HWP does not spin in this time window!')
-        if self._status: print('INFO: hwp angle calculation is finished.')
-
-        counter = data[2][1]
-        counter_idx = data[3][1]
-        irig_time = data[1][1]
-        rising_edge = data[0][1]
-        if self._irig_type == 1:
-            irig_time = data[4][1]
-            rising_edge = data[5][1]
-        if not self._direction:
-            return self._hwp_angle_calculator(counter, counter_idx, irig_time, rising_edge)
+        else:
+            counter = []
+            counter_idx = []
+            quad_time = []
+            quad = []
+            
+        if 'irig_time' in data.keys():
+            irig_time = data['irig_time'][1]
+            rising_edge = data['rising_edge_count'][1]
+            if self._irig_type == 1:
+                irig_time = data['irig_synch_pulse_clock_time'][1]
+                rising_edge = data['irig_synch_pulse_clock_counts'][1]
         else: 
-            time, angle = self._hwp_angle_calculator(counter, counter_idx, irig_time, rising_edge)
-            quad = self._quad_form(data[-1][1])
-            quad_time = self._quad_form(data['quad'][0])
-            quad_irig = scipy.interpolate.interp1d(quad_time, quad, kind='linear',fill_value='extrapolate')(time)
-            return time, angle, quad_irig
+            irig_time = []
+            rising_edge = []        
 
-    def _hwp_angle_calculator(self, counter, counter_idx, irig_time, rising_edge):
+        if 'counter' in data.keys() and 'irig_time' in data.keys():
+            fast_time, angle = self._hwp_angle_calculator(counter, counter_idx, irig_time, rising_edge, quad_time, quad)
+            # Reject unexpected fast_times
+            idx = np.where((fast_time>=data['irig_time'][0][0]-2) & (fast_time<=data['irig_time'][0][-1]+2))
+            fast_time = fast_time[idx]
+            angle = angle[idx]
+
+            # hwp speed calc. (approximate using ref)
+            self._ref_indexes = self._ref_indexes[np.where(np.diff(self._ref_indexes)==1140)]
+            hwp_rate_ref = 1/np.diff(fast_time[self._ref_indexes])
+            hwp_rate = np.zeros(self._ref_indexes[1])
+            fill_rate = 0
+            for r in range(len(self._ref_indexes))[1:-1]: 
+                if np.diff(self._ref_indexes)[r]==1140: fill_rate = hwp_rate_ref[r]
+                hwp_rate = np.concatenate([hwp_rate,np.full(np.diff(self._ref_indexes)[r],fill_rate)])
+            hwp_rate = np.concatenate([hwp_rate,np.full(len(fast_time)-self._ref_indexes[-1],0)])
+        else: 
+            fast_time = []
+            angle = []
+            hwp_rate = []
+  
+        # Slow block
+        # - Time definition -
+        # if fast_time exists, slow_time = fast_time
+        # else if irig_time exists but no fast_time, slow_time = irig_time
+        # else: slow_time is per 10 sec array
+        
+        if len(fast_time)!=0 and len(irig_time)!=0: 
+            locked = np.ones(len(fast_time),dtype=bool)
+            irig_time = irig_time[np.where((irig_time<fast_time[0]) | (irig_time>fast_time[-1]))]
+            fast_irig_time = np.append(irig_time,fast_time).flatten()
+            fast_irig_idx = np.argsort(fast_irig_time)
+            fast_irig_time = fast_irig_time[fast_irig_idx]
+            locked = (np.append(np.zeros(len(irig_time),dtype=bool),locked).flatten())[fast_irig_idx]
+            hwp_rate = (np.append(np.zeros(len(irig_time),dtype=float),hwp_rate).flatten())[fast_irig_idx]
+            stable = np.ones(len(fast_irig_time),dtype=bool)
+        elif len(fast_time)==0 and len(irig_time)!=0:
+            fast_irig_time = irig_time
+            locked = np.zeros(len(fast_irig_time),dtype=bool)
+            stable = np.ones(len(fast_irig_time),dtype=bool)
+            hwp_rate = np.zeros(len(fast_irig_time),dtype=float)
+        else: 
+            fast_irig_time = []
+            locked = []
+            stable = []
+            hwp_rate = []
+        
+        slow_only_time = (np.arange(start,end,10))
+        if len(fast_irig_time)!=0:
+            slow_only_time = slow_only_time[np.where((slow_only_time<fast_irig_time[0]) | (slow_only_time>fast_irig_time[-1]))]
+            slow_time = np.append(slow_only_time,fast_irig_time).flatten()
+            slow_idx = np.argsort(slow_time)
+            slow_time = slow_time[slow_idx]
+            locked = np.append(np.zeros(len(slow_only_time),dtype=bool),locked)[slow_idx]
+            stable = np.append(np.zeros(len(slow_only_time),dtype=bool),stable)[slow_idx]
+            hwp_rate = np.append(np.zeros(len(slow_only_time),dtype=float),hwp_rate)[slow_idx]
+        else:
+            slow_time = slow_only_time
+            locked = np.zeros(len(slow_time),dtype=bool)
+            stable = np.zeros(len(slow_time),dtype=bool)
+            hwp_rate = np.zeros(len(slow_time),dtype=float)
+
+        self._g3out(int(start), fast_time, angle, slow_time, stable, locked, hwp_rate)
+        
+        return fast_time, angle, slow_time, stable, locked, hwp_rate
+
+
+
+    def _hwp_angle_calculator(self, counter, counter_idx, irig_time, rising_edge, quad_time, quad):
 
         #   counter: BBB counter values for encoder signal edges
         self._encd_clk = counter
@@ -160,6 +198,9 @@ class G3tHWP():
         self._irig_time = irig_time
         #   rising_edge_count: BBB clcok count values for the IRIG on-time reference marker risinge edge
         self._rising_edge = rising_edge
+        #   quad: quadrature signal to determine rotation direction
+        self._quad_time = quad_time
+        self._quad = quad
 
         # return arrays
         self._time = []
@@ -283,9 +324,12 @@ class G3tHWP():
         return
     
     def _calc_angle_linear(self):
-        self._angle = (self._encd_cnt - self._ref_cnt[0]) * self._delta_angle % (2*np.pi)
-        #self._angle = (self._encd_cnt - self._ref_cnt[0]) * self._delta_angle
+        
+        quad = scipy.interpolate.interp1d(self._quad_time, self._quad, kind='linear',fill_value='extrapolate')(self._encd_clk)
+        direction = list(map(lambda x: 1 if x == 0 else -1, quad))
+        self._angle = direction *(self._encd_cnt - self._ref_cnt[0]) * self._delta_angle % (2*np.pi)
         return
+    
 
     def _find_dropped_packets(self):
         """ Estimate the number of dropped packets """
@@ -293,32 +337,126 @@ class G3tHWP():
         dropped_samples = np.sum(cnt_diff[cnt_diff >= self._pkt_size])
         self._num_dropped_pkts = dropped_samples // (self._pkt_size - 1)
         if self._num_dropped_pkts > 0:
-            print('WARNING: {} dropped packets are found.'.format(self._num_dropped_pkts))
+            if self._status: print('WARNING: {} dropped packets are found.'.format(self._num_dropped_pkts))
         return
     
     def _encoder_packet_sort(self):
         cnt_diff = np.diff(self._encd_cnt)
         if np.any(cnt_diff != 1):
-            print('WARNING: counter is not correct')
+            if self._status:
+                print('WARNING: counter is not correct')
             if np.any(cnt_diff < 0): 
-                print('WARNING: counter is not incremental') 
+                if self._status: print('WARNING: counter is not incremental') 
                 if 1-self._pkt_size in cnt_diff: print('packet flip is found')
                 idx = np.argsort(self._encd_cnt)
                 self._encd_clk = self._encd_clk[idx]
-            else: print('WARNING: maybe packet drop exists')
+            else: 
+                if self._status:
+                    print('WARNING: maybe packet drop exists')
         else: 
-            if self._status: print('INFO: no need to fix encoder index')
+            if self._status:
+                print('INFO: no need to fix encoder index')
     
     def _quad_form(self, quad):
         # treat 30 sec span noise
         quad_diff = np.ediff1d(quad, to_begin=0)
         for i in np.argwhere(quad_diff==1).flatten():
-            if quad[i-1] == 0 and quad[i] > 0 and quad[i+1] == 0: quad[i]=0
+            if i!=0 and i!=np.argwhere(quad_diff==1).flatten()[-1]:
+                if quad[i-1] == 0 and quad[i] > 0 and quad[i+1] == 0: quad[i]=0
         # bit process
         quad[(quad<1) & (quad>=0.5)] = 1
         quad[(quad>0) & (quad<0.5)] = 0
         return quad
     
+    def _g3out(self, start, fast_time, angle, slow_time, stable, locked, hwp_rate):
+        
+        filename = str(start)
+        dir_name = filename[:5]
+        if not os.path.isdir(self._path + '/' + dir_name): os.mkdir(self._path + '/' + dir_name)
+        session = so3g.hk.HKSessionHelper(hkagg_version=2)
+        writer = core.G3Writer(self._path + '/' + dir_name + '/' + filename + '.g3')
+        writer.Process(session.session_frame())
+        prov_id = session.add_provider('hwp')
+        writer.Process(session.status_frame())
+        frame = session.data_frame(prov_id)
+
+        slow_block = core.G3TimesampleMap()
+        slow_block.times = core.G3VectorTime([core.G3Time(_t * core.G3Units.s) for _t in slow_time])
+        slow_block['stable'] = core.G3VectorInt(stable)
+        slow_block['locked'] = core.G3VectorInt(locked)
+        slow_block['hwp_rate'] = core.G3VectorDouble(hwp_rate)
+        frame['block_names'].append('slow')
+        frame['blocks'].append(slow_block)
+
+        if len(fast_time)!=0:
+            fast_block = core.G3TimesampleMap()
+            fast_block.times = core.G3VectorTime([core.G3Time(_t * core.G3Units.s) for _t in fast_time])
+            fast_block['hwp_angle'] = core.G3VectorDouble(angle)
+            frame['block_names'].append('fast')
+            frame['blocks'].append(fast_block)
+        
+        writer.Process(frame)
+        
     def interp_smurf(self, smurf_timestamp):
         smurf_angle = scipy.interpolate.interp1d(self._time, self.angle, kind='linear',fill_value='extrapolate')(smurf_timestamp)
         return smurf_angle
+
+    
+    
+    ### currently not use ###
+    def load_file(self, filename):
+        
+        # load housekeeping files with hwp keys
+        if self._status: print('loading HK data files ...')
+        scanner = so3g.hk.HKArchiveScanner()
+        if isinstance(filename, list) or isinstance(filename, np.ndarray):
+            for f in filename: scanner.process_file(self._archive_path + '/' + f)
+        else: scanner.process_file(self._archive_path + '/' + filename)
+        arc = scanner.finalize()
+
+        for i in range(len(self._hwp_keys)):
+            if not self._hwp_keys[i] in arc.get_fields()[0].keys():
+                raise ValueError('HWP is not spinning in this file!')
+
+        data = arc.simple(self._hwp_keys)
+
+        counter = data[2][1]
+        counter_idx = data[3][1]
+        irig_time = data[1][1]
+        rising_edge = data[0][1]
+        if self._irig_type == 1:
+            irig_time = data[4][1]
+            rising_edge = data[5][1]
+        quad_time = data[6][0]
+        quad = self._quad_form(data[6][1])
+
+        fast_time, angle = self._hwp_angle_calculator(counter, counter_idx, irig_time, rising_edge, quad_time, quad)
+        # Reject unexpected fast_times
+        idx = np.where((fast_time>=data[1][0][0]-2) & (fast_time<=data[1][0][-1]+2))
+        fast_time = fast_time[idx]
+        angle = angle[idx]
+        # hwp speed calc.
+        hwp_rate = 1/np.diff(fast_time)/float(self._num_edges)
+        hwp_rate = np.insert(hwp_rate,0,hwp_rate[0])
+
+        
+        # Slow block
+        # - Time definition -
+        # if fast_time exists, slow_time = fast_time
+        # else if irig_time exists but no fast_time, slow_time = irig_time
+        # else: slow_time is per 10 sec array
+        
+        locked = np.ones(len(fast_time),dtype=bool)
+        irig_time = irig_time[np.where((irig_time<fast_time[0]) | (irig_time>fast_time[-1]))]
+        fast_irig_time = np.append(irig_time,fast_time).flatten()
+        fast_irig_idx = np.argsort(fast_irig_time)
+        fast_irig_time = fast_irig_time[fast_irig_idx]
+        locked = (np.append(np.zeros(len(irig_time),dtype=bool),locked).flatten())[fast_irig_idx]
+        hwp_rate = (np.append(np.zeros(len(irig_time),dtype=float),hwp_rate).flatten())[fast_irig_idx]
+        stable = np.ones(len(fast_irig_time),dtype=bool)
+        slow_time = fast_irig_time  
+        self._g3out(filename, fast_time, angle, slow_time, stable, locked, hwp_rate)
+
+        return fast_time, angle, slow_time, stable, locked, hwp_rate. self._ref_inde
+        
+        
