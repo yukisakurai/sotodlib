@@ -169,12 +169,15 @@ class G3tHWP():
             rising_edge = []        
 
         if 'counter' in data.keys() and 'irig_time' in data.keys():
+            
+            # Reject unexpected counter
+            time = scipy.interpolate.interp1d(rising_edge, irig_time, kind='linear',fill_value='extrapolate')(counter)
+            idx = np.where((time>=data['irig_time'][0][0]-2) & (time<=data['irig_time'][0][-1]+2))
+            counter = counter[idx]
+            counter_idx = counter_idx[idx]
+            
             fast_time, angle = self._hwp_angle_calculator(counter, counter_idx, irig_time, rising_edge, quad_time, quad, ratio, fast)
-            # Reject unexpected fast_times
-#            idx = np.where((fast_time>=data['irig_time'][0][0]-2) & (fast_time<=data['irig_time'][0][-1]+2))
-#            fast_time = fast_time[idx]
-#            angle = angle[idx]
-
+    
             # hwp speed calc. (approximate using ref)
             hwp_rate_ref = 1/np.diff(fast_time[self._ref_indexes])
             hwp_rate = np.zeros(self._ref_indexes[1])
@@ -281,7 +284,7 @@ class G3tHWP():
 
         return
 
-
+    
     def _hwp_angle_calculator(self, counter, counter_idx, irig_time, rising_edge, quad_time, quad, ratio, fast):
 
         #   counter: BBB counter values for encoder signal edges
@@ -333,6 +336,7 @@ class G3tHWP():
     def _find_refs(self, dev):
 
         """ Find reference slits """
+        self._ref_indexes = []
         # Calculate spacing between all clock values
         diff = np.ediff1d(self._encd_clk, to_begin=0)
         split = int(len(diff)/self._num_edges)
@@ -368,7 +372,7 @@ class G3tHWP():
         self._ref_cnt = np.take(self._encd_cnt, self._ref_indexes)
         if self._debug: print('INFO: found {} reference points'.format(len(self._ref_indexes)))
         
-        return
+        return 
         
     def _fill_refs(self):
         """ Fill in the reference edges """
@@ -437,7 +441,7 @@ class G3tHWP():
     
     def _calc_angle_linear(self):
         
-        quad = scipy.interpolate.interp1d(self._quad_time, self._quad, kind='linear',fill_value='extrapolate')(self._encd_clk)
+        quad = self._quad_form(scipy.interpolate.interp1d(self._quad_time, self._quad, kind='linear',fill_value='extrapolate')(self._time),interp=True)
         direction = list(map(lambda x: 1 if x == 0 else -1, quad))
         self._angle = direction *(self._encd_cnt - self._ref_cnt[0]) * self._delta_angle % (2*np.pi)
         return
@@ -468,14 +472,15 @@ class G3tHWP():
             if self._debug:
                 print('INFO: no need to fix encoder index')
     
-    def _quad_form(self, quad):
+    def _quad_form(self, quad, interp=False):
         # treat 30 sec span noise
-        quad_diff = np.ediff1d(quad, to_begin=0)
-        for i in np.argwhere(quad_diff==1).flatten():
-            if i!=0 and i!=np.argwhere(quad_diff==1).flatten()[-1]:
-                if quad[i-1] == 0 and quad[i] > 0 and quad[i+1] == 0: quad[i]=0
+        if not interp:
+            quad_diff = np.ediff1d(quad, to_begin=0)
+            for i in np.argwhere(quad_diff==1).flatten():
+                if i!=0 and i!=np.argwhere(quad_diff==1).flatten()[-1]:
+                    if quad[i-1] == 0 and quad[i] > 0 and quad[i+1] == 0: quad[i]=0
         # bit process
-        quad[(quad<1) & (quad>=0.5)] = 1
+        quad[(quad>=0.5)] = 1
         quad[(quad>0) & (quad<0.5)] = 0
         return quad
         
